@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alberta Clash — Defend the Prairie</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="loader">
+        <div class="loader-logo">🏔️ Alberta Clash</div>
+        <div class="loader-bar-wrap"><div id="loader-bar" class="loader-bar"></div></div>
+        <p id="loader-text">Loading prairie scenery…</p>
+        <p class="loader-credit">Alberta buildings are custom · Scenery props from <a href="https://kaylousberg.itch.io/" target="_blank" rel="noopener">KayKit</a> (CC0)</p>
+      </div>
+      <canvas id="game-canvas"></canvas>
+
+      <header id="hud-top">
+        <div class="logo">
+          <span class="logo-icon">🏔️</span>
+          <span class="logo-text">Alberta Clash</span>
+        </div>
+        <div class="resources">
+          <div class="resource" data-resource="oil">
+            <span class="resource-icon">🛢️</span>
+            <div class="resource-body">
+              <span class="resource-value" id="res-oil">600</span>
+              <div class="resource-cap"><div class="resource-cap-fill" id="cap-oil"></div></div>
+            </div>
+          </div>
+          <div class="resource" data-resource="wheat">
+            <span class="resource-icon">🌾</span>
+            <div class="resource-body">
+              <span class="resource-value" id="res-wheat">600</span>
+              <div class="resource-cap"><div class="resource-cap-fill" id="cap-wheat"></div></div>
+            </div>
+          </div>
+          <div class="resource" data-resource="lumber">
+            <span class="resource-icon">🌲</span>
+            <div class="resource-body">
+              <span class="resource-value" id="res-lumber">600</span>
+              <div class="resource-cap"><div class="resource-cap-fill" id="cap-lumber"></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="raid-status" id="raid-status" title="Click to start raid now">
+          <div class="raid-label">Wave <span id="wave-num">0</span></div>
+          <div class="raid-bar"><div class="raid-bar-fill" id="raid-bar-fill"></div></div>
+          <div class="raid-timer" id="raid-timer-text">Next raid: 75s — click to start</div>
+        </div>
+        <div class="hq-level">
+          HQ Lv.<span id="hq-level">1</span>
+        </div>
+      </header>
+
+      <aside id="building-menu">
+        <button class="build-btn" data-building="oil_rig" title="Oil Rig — generates oil">
+          <span class="build-icon">🛢️</span>
+          <span class="build-name">Oil Rig</span>
+          <span class="build-cost">150🛢️</span>
+        </button>
+        <button class="build-btn" data-building="wheat_farm" title="Wheat Farm — generates wheat">
+          <span class="build-icon">🌾</span>
+          <span class="build-name">Wheat Farm</span>
+          <span class="build-cost">100🌾</span>
+        </button>
+        <button class="build-btn" data-building="lumber_mill" title="Lumber Mill — generates lumber">
+          <span class="build-icon">🌲</span>
+          <span class="build-name">Lumber Mill</span>
+          <span class="build-cost">120🌲</span>
+        </button>
+        <button class="build-btn" data-building="grain_silo" title="Grain Silo — stores wheat">
+          <span class="build-icon">🏗️</span>
+          <span class="build-name">Grain Silo</span>
+          <span class="build-cost">200🌾</span>
+        </button>
+        <button class="build-btn" data-building="oil_depot" title="Oil Storage Depot — stores oil">
+          <span class="build-icon">🏭</span>
+          <span class="build-name">Oil Depot</span>
+          <span class="build-cost">220🛢️ 80🌲</span>
+        </button>
+        <button class="build-btn" data-building="rcmp_post" title="RCMP Post — trains Mounties">
+          <span class="build-icon">⭐</span>
+          <span class="build-name">RCMP Post</span>
+          <span class="build-cost">250🛢️ 150🌲</span>
+        </button>
+        <button class="build-btn" data-building="fence" title="Ranch Fence — F hotkey, R to rotate (no building during raids)">
+          <span class="build-icon">🪵</span>
+          <span class="build-name">Ranch Fence</span>
+          <span class="build-cost">50🌲</span>
+        </button>
+        <button class="build-btn" data-building="lookout" title="Mountain Lookout — defense">
+          <span class="build-icon">🔭</span>
+          <span class="build-name">Lookout</span>
+          <span class="build-cost">180🛢️ 100🌲</span>
+        </button>
+        <button class="build-btn" data-building="air_wing" title="Cold Lake Air Wing — train CF-18 fighters">
+          <span class="build-icon">✈️</span>
+          <span class="build-name">Air Wing</span>
+          <span class="build-cost">400🛢️ 200🌲 150🌾</span>
+        </button>
+        <button class="build-btn cancel-btn" id="cancel-build" title="Cancel placement">
+          <span class="build-icon">✕</span>
+          <span class="build-name">Cancel</span>
+        </button>
+      </aside>
+
+      <div id="info-panel" class="hidden">
+        <div class="info-header">
+          <h3 id="info-title">Building</h3>
+          <span id="info-level" class="info-level">Level 1</span>
+        </div>
+        <p id="info-desc"></p>
+        <div id="info-actions"><div id="info-action-buttons"></div></div>
+        <button id="info-close">Close</button>
+      </div>
+
+      <div id="toast-container"></div>
+
+      <footer id="hud-bottom">
+        <p>Drag pan · Scroll zoom · F fence · T train · R rotate · Select Air Wing then train CF-18s</p>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
