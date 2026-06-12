@@ -1,19 +1,23 @@
-# Alberta Clash
+# Vibes Alberta
+
+## Live demo here:
+
+https://brendanbezuko.github.io/VibesAlberta/
 
 A Clash of Clans-style base builder on the Alberta prairie. Build pumpjacks, wheat farms, grain elevators, RCMP outposts, and defend your settlement.
 
 ## Alberta-themed buildings (custom 3D)
 
-| Building | What it looks like |
-|----------|-------------------|
+| Building            | What it looks like                              |
+| ------------------- | ----------------------------------------------- |
 | Alberta Legislature | Beaux-Arts dome & colonnade (Edmonton-style HQ) |
-| Oil Rig | Pumpjack / nodding donkey |
-| Wheat Farm | Golden prairie field + red barn |
-| Lumber Mill | Boreal sawmill with log piles |
-| Grain Silo | Prairie grain elevator |
-| RCMP Outpost | Red detachment + police cruiser prop |
-| Ranch Fence | Wooden posts & wire |
-| Mountain Lookout | Rocky Mountain fire tower |
+| Oil Rig             | Pumpjack / nodding donkey                       |
+| Wheat Farm          | Golden prairie field + red barn                 |
+| Lumber Mill         | Boreal sawmill with log piles                   |
+| Grain Silo          | Prairie grain elevator                          |
+| RCMP Outpost        | Red detachment + police cruiser prop            |
+| Ranch Fence         | Wooden posts & wire                             |
+| Mountain Lookout    | Rocky Mountain fire tower                       |
 
 ## Units (custom 3D)
 
@@ -45,4 +49,3 @@ npm run dev
 - [Three.js](https://threejs.org/) + [Vite](https://vitejs.dev/)
 - Custom Alberta building & unit models
 - [KayKit](https://kaylousberg.itch.io/) CC0 props for environment
-# VibesAlberta
