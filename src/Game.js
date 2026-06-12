@@ -6,7 +6,7 @@ import {
   getUpgradeCost,
   getEffectiveRate,
   getEffectiveDefense,
-  getBarrierHp,
+  getBuildingHp,
 } from './resources.js';
 import { createBuildingMesh, createGhostMesh, setGhostValidity, scaleBuildingByLevel } from './buildings.js';
 import { createTerrain, setupLighting } from './terrain.js';
@@ -17,8 +17,41 @@ import { CombatSystem } from './combat.js';
 import { AnimationSystem, createSelectionRing, updateSelectionRing } from './animations.js';
 import { AssetLoader } from './assetLoader.js';
 import { getBuildingAttackRadius } from './forceField.js';
+import { addBuildingHpBar, updateBuildingHpBar } from './buildingHealth.js';
 
 let buildingIdCounter = 1;
+
+function getFenceLineCells(gx0, gz0, gx1, gz1) {
+  const cells = [];
+  let x = gx0;
+  let z = gz0;
+  const dx = Math.abs(gx1 - gx0);
+  const dz = Math.abs(gz1 - gz0);
+  const sx = gx0 < gx1 ? 1 : -1;
+  const sz = gz0 < gz1 ? 1 : -1;
+  let err = dx - dz;
+
+  while (true) {
+    cells.push({ gx: x, gz: z });
+    if (x === gx1 && z === gz1) break;
+    const e2 = 2 * err;
+    if (e2 > -dz) {
+      err -= dz;
+      x += sx;
+    }
+    if (e2 < dx) {
+      err += dx;
+      z += sz;
+    }
+  }
+  return cells;
+}
+
+function getFenceRotationForLine(gx0, gz0, gx1, gz1) {
+  const dx = Math.abs(gx1 - gx0);
+  const dz = Math.abs(gz1 - gz0);
+  return dx >= dz ? 0 : 1;
+}
 
 export class Game {
   static async create(canvas, onLoadProgress) {
@@ -51,6 +84,8 @@ export class Game {
     this.rm = new ResourceManager();
     this.buildings = [];
     this.placement = null;
+    this.fenceDrag = null;
+    this.fencePreviewGroup = null;
     this.selectedBuilding = null;
     this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.isoCam = null;
@@ -60,6 +95,7 @@ export class Game {
     this.selectionRing = null;
     this.mouse = { x: 0, y: 0 };
     this.clock = new THREE.Clock();
+    this.gameOver = false;
     /** Saved fence layout — rebuilt free after each raid. */
     this.fenceBlueprint = [];
   }
@@ -107,6 +143,7 @@ export class Game {
 
     this.grid = new GridSystem();
     this.isoCam = new IsometricCamera(this.canvas, new THREE.Vector3(0, 0, 0));
+    this.isoCam.shouldBlockPan = () => this.placement?.type === 'fence';
     this.combat = new CombatSystem(this.scene, this);
     this.ui = new UIManager(this.rm, this);
     this.selectionRing = createSelectionRing(this.scene);
@@ -123,6 +160,7 @@ export class Game {
   }
 
   trainAtSelected() {
+    if (this.gameOver) return false;
     const building = this.selectedBuilding;
     if (!building) {
       this.ui.showToast('Select a building first', 'warn');
@@ -183,10 +221,9 @@ export class Game {
       attackRadius: getBuildingAttackRadius(size, level),
       _hitFlash: 0,
     };
-    if (def.barrier) {
-      building.maxHp = getBarrierHp(building);
-      building.hp = building.maxHp;
-    }
+    building.maxHp = getBuildingHp(building);
+    building.hp = building.maxHp;
+    addBuildingHpBar(building);
     this.buildings.push(building);
     this.grid.occupy(id, gx, gz, size);
     this.combat?.invalidateCaches();
@@ -202,6 +239,13 @@ export class Game {
   }
 
   destroyBuilding(building) {
+    const def = BUILDING_DEFS[building.type];
+    if (def?.storageBonus) {
+      this.rm.removeCapacity(def.storageBonus);
+    }
+    if (this.combat) {
+      this.combat.training = this.combat.training.filter((t) => t.building.id !== building.id);
+    }
     this.grid.release(building.id);
     this.scene.remove(building.mesh);
     this.buildings = this.buildings.filter((b) => b.id !== building.id);
@@ -214,6 +258,7 @@ export class Game {
   }
 
   upgradeBuilding(building) {
+    if (this.gameOver) return false;
     const def = BUILDING_DEFS[building.type];
     const level = building.level ?? 1;
     if (level >= (def.maxLevel ?? 3)) return false;
@@ -240,10 +285,11 @@ export class Game {
 
     scaleBuildingByLevel(building.mesh, building.level);
     building.attackRadius = getBuildingAttackRadius(building.size, building.level);
+    const prevMax = building.maxHp ?? getBuildingHp({ ...building, level: level });
+    building.maxHp = getBuildingHp(building);
+    building.hp = Math.min(building.maxHp, (building.hp ?? prevMax) + (building.maxHp - prevMax));
+    updateBuildingHpBar(building);
     if (def.barrier) {
-      const prevMax = building.maxHp ?? getBarrierHp({ ...building, level: level });
-      building.maxHp = getBarrierHp(building);
-      building.hp = Math.min(building.maxHp, (building.hp ?? prevMax) + (building.maxHp - prevMax));
       this.recordFence(building);
     }
     this.ui.showBuildingInfo(building);
@@ -252,6 +298,7 @@ export class Game {
   }
 
   startPlacement(type) {
+    if (this.gameOver) return;
     if (type === 'hq') return;
     if (type === 'fence' && !this.canPlaceFence()) {
       this.ui.showToast('Cannot build fences during a raid', 'warn');
@@ -291,12 +338,113 @@ export class Game {
   }
 
   cancelPlacement() {
+    this.clearFenceDrag();
     if (!this.placement) return;
     this.scene.remove(this.placement.ghost);
     this.placement = null;
   }
 
+  clearFenceDrag() {
+    this.fenceDrag = null;
+    if (this.fencePreviewGroup) {
+      this.scene.remove(this.fencePreviewGroup);
+      this.fencePreviewGroup = null;
+    }
+  }
+
+  placeFenceAt(gx, gz, rotation) {
+    if (!this.canPlaceFence()) return false;
+    const def = BUILDING_DEFS.fence;
+    if (this.grid.getPlacementBlockReason(gx, gz, 1, 'fence') || !this.rm.canAfford(def.cost)) {
+      return false;
+    }
+    this.rm.spend(def.cost);
+    this.addBuilding('fence', gx, gz, 1, 1, rotation);
+    return true;
+  }
+
+  commitFenceLine(gx0, gz0, gx1, gz1) {
+    const cells = getFenceLineCells(gx0, gz0, gx1, gz1);
+    const rotation = getFenceRotationForLine(gx0, gz0, gx1, gz1);
+    this.placement.rotation = rotation;
+
+    let placed = 0;
+    for (const { gx, gz } of cells) {
+      if (!this.rm.canAfford(BUILDING_DEFS.fence.cost)) break;
+      if (this.placeFenceAt(gx, gz, rotation)) placed++;
+    }
+
+    if (placed > 0) {
+      this.ui.showToast(`Built ${placed} fence segment${placed > 1 ? 's' : ''}`, 'success');
+    } else {
+      this.ui.showToast('Cannot place fence here', 'warn');
+    }
+  }
+
+  updateFencePreview() {
+    if (!this.fenceDrag || !this.fencePreviewGroup) return;
+
+    while (this.fencePreviewGroup.children.length) {
+      this.fencePreviewGroup.remove(this.fencePreviewGroup.children[0]);
+    }
+
+    const { startGx, startGz, endGx, endGz } = this.fenceDrag;
+    const cells = getFenceLineCells(startGx, startGz, endGx, endGz);
+    const rotation = getFenceRotationForLine(startGx, startGz, endGx, endGz);
+    const def = BUILDING_DEFS.fence;
+    const raidBlocked = !this.canPlaceFence();
+
+    for (const { gx, gz } of cells) {
+      const ghost = createGhostMesh('fence', 1, this.assetLoader);
+      const { x, z } = this.grid.gridToWorld(gx, gz, 1);
+      ghost.position.set(x, 0, z);
+      this.applyBuildingRotation(ghost, rotation);
+      const valid =
+        !raidBlocked &&
+        !this.grid.getPlacementBlockReason(gx, gz, 1, 'fence') &&
+        this.rm.canAfford(def.cost);
+      setGhostValidity(ghost, valid);
+      this.fencePreviewGroup.add(ghost);
+    }
+  }
+
+  startFenceDrag(gx, gz) {
+    this.fenceDrag = { startGx: gx, startGz: gz, endGx: gx, endGz: gz };
+    if (!this.fencePreviewGroup) {
+      this.fencePreviewGroup = new THREE.Group();
+      this.scene.add(this.fencePreviewGroup);
+    }
+    this.updateFencePreview();
+  }
+
+  updateFenceDrag(gx, gz) {
+    if (!this.fenceDrag) return;
+    if (this.fenceDrag.endGx === gx && this.fenceDrag.endGz === gz) return;
+    this.fenceDrag.endGx = gx;
+    this.fenceDrag.endGz = gz;
+    this.updateFencePreview();
+  }
+
+  finishFenceDrag() {
+    if (!this.fenceDrag) return;
+    const { startGx, startGz, endGx, endGz } = this.fenceDrag;
+    this.clearFenceDrag();
+
+    if (startGx === endGx && startGz === endGz) {
+      const rotation = this.placement.rotation ?? 0;
+      if (this.placeFenceAt(startGx, startGz, rotation)) {
+        this.ui.showToast('Built Ranch Fence', 'success');
+      } else {
+        this.ui.showToast('Cannot place fence here', 'warn');
+      }
+      return;
+    }
+
+    this.commitFenceLine(startGx, startGz, endGx, endGz);
+  }
+
   tryPlace(gx, gz) {
+    if (this.gameOver) return false;
     if (!this.placement) return false;
     const { type, size, ghost } = this.placement;
     const def = BUILDING_DEFS[type];
@@ -304,6 +452,16 @@ export class Game {
     if (type === 'fence' && !this.canPlaceFence()) {
       this.ui.showToast('Cannot build fences during a raid', 'warn');
       return false;
+    }
+
+    if (type === 'fence') {
+      const rotation = this.placement.rotation ?? 0;
+      if (this.placeFenceAt(gx, gz, rotation)) {
+        this.ui.showToast('Built Ranch Fence', 'success');
+      } else {
+        this.ui.showToast('Cannot place fence here', 'warn');
+      }
+      return true;
     }
 
     const blockReason = this.grid.getPlacementBlockReason(gx, gz, size, type);
@@ -350,15 +508,33 @@ export class Game {
     this.canvas.addEventListener('mousemove', (e) => {
       this.mouse.x = e.clientX;
       this.mouse.y = e.clientY;
+
+      if (this.fenceDrag && this.placement?.type === 'fence') {
+        const ndc = this.isoCam.getNDC(e);
+        const gridPos = this.grid.raycastGround(this.isoCam.camera, ndc, this.groundPlane);
+        if (gridPos) this.updateFenceDrag(gridPos.gx, gridPos.gz);
+      }
     });
 
     this.canvas.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       dragStart = { x: e.clientX, y: e.clientY, time: Date.now() };
+
+      if (this.placement?.type === 'fence') {
+        const ndc = this.isoCam.getNDC(e);
+        const gridPos = this.grid.raycastGround(this.isoCam.camera, ndc, this.groundPlane);
+        if (gridPos) this.startFenceDrag(gridPos.gx, gridPos.gz);
+      }
     });
 
     this.canvas.addEventListener('mouseup', (e) => {
       if (e.button !== 0 || !dragStart) return;
+
+      if (this.placement?.type === 'fence' && this.fenceDrag) {
+        this.finishFenceDrag();
+        dragStart = null;
+        return;
+      }
 
       const dx = e.clientX - dragStart.x;
       const dy = e.clientY - dragStart.y;
@@ -408,6 +584,12 @@ export class Game {
   updatePlacementGhost() {
     if (!this.placement) return;
 
+    if (this.fenceDrag) {
+      this.placement.ghost.visible = false;
+      return;
+    }
+    this.placement.ghost.visible = true;
+
     const ndc = this.isoCam.getNDC({ clientX: this.mouse.x, clientY: this.mouse.y });
     const gridPos = this.grid.raycastGround(this.isoCam.camera, ndc, this.groundPlane);
     if (!gridPos) return;
@@ -430,6 +612,17 @@ export class Game {
     setGhostValidity(ghost, valid);
   }
 
+  gameOver() {
+    if (this.gameOver) return;
+    this.gameOver = true;
+    if (this.combat) this.combat.raidActive = false;
+    this.cancelPlacement();
+    this.ui?.onPlacementEnd();
+    this.ui?.hideInfoPanel();
+    this.ui?.showGameOver(this.combat?.wave ?? 0);
+    this.ui?.showToast('🏛️ The Alberta Legislature has fallen!', 'raid');
+  }
+
   resize() {
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
@@ -441,11 +634,13 @@ export class Game {
     requestAnimationFrame(() => this.animate());
 
     const dt = Math.min(this.clock.getDelta(), 0.1);
-    this.rm.tickProducers(this.buildings, dt, getEffectiveRate);
-    this.rm.tickUpkeep(this.buildings, dt);
-    this.combat?.update(dt);
-    this.animations.update(dt, this.buildings);
-    this.updatePlacementGhost();
+    if (!this.gameOver) {
+      this.rm.tickProducers(this.buildings, dt, getEffectiveRate);
+      this.rm.tickUpkeep(this.buildings, dt);
+      this.combat?.update(dt);
+      this.updatePlacementGhost();
+    }
+    this.animations.update(dt, this.buildings, this.isoCam.camera);
 
     if (this.selectedBuilding) {
       updateSelectionRing(this.selectionRing, this.selectedBuilding, this.grid);

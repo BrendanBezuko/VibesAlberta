@@ -1,14 +1,17 @@
 import * as THREE from 'three';
+import { updateBuildingHpBar } from './buildingHealth.js';
 
 export class AnimationSystem {
   constructor() {
     this.time = 0;
   }
 
-  update(dt, buildings) {
+  update(dt, buildings, camera) {
     this.time += dt;
 
     for (const building of buildings) {
+      updateBuildingHpBar(building, camera);
+
       if (building._hitFlash > 0) {
         building._hitFlash -= dt;
         const flash = Math.sin(building._hitFlash * 30) * 0.5 + 0.5;

@@ -14,6 +14,7 @@ import {
   GRID_ROWS,
 } from './albertaMap.js';
 import { TERRAIN_TYPES, getRockiesBorderSamples, getAlbertaCellTerrain } from './terrainFeatures.js';
+import { createSimpleMountain, addMountainToScene } from './mountains.js';
 import { NATURE_ASSETS } from './assetLoader.js';
 
 const Y_GROUND = 0;
@@ -24,8 +25,8 @@ export function createTerrain(scene, assetLoader) {
   createAlbertaBorder(scene);
   createPlayableGrid(scene);
   createMapFrame(scene);
-  createRockiesBorderMountains(scene, assetLoader);
-  createBcMountains(scene, assetLoader);
+  createWestBorderMountains(scene);
+  createBcMountains(scene);
   createForestTrees(scene, assetLoader);
   createRegionLabels(scene);
   createAlbertaSky(scene);
@@ -165,136 +166,44 @@ function createMapFrame(scene) {
   );
 }
 
-function mountainMat(color) {
-  return new THREE.MeshLambertMaterial({ color });
-}
-
-function createProceduralMountain(scale, seed) {
-  const mount = new THREE.Group();
-  const s = scale;
-  const v = Math.abs(Math.floor(seed * 97)) % 5;
-
-  const foothill = new THREE.Mesh(
-    new THREE.ConeGeometry(1.15 * s, 1.4 * s, 7),
-    mountainMat(0x4a4a44)
-  );
-  foothill.position.y = 0.55 * s;
-  foothill.castShadow = true;
-  mount.add(foothill);
-
-  const mainH = 2.8 * s + (v % 3) * 0.9 * s;
-  const main = new THREE.Mesh(new THREE.ConeGeometry(0.75 * s, mainH, 6), mountainMat(0x6e6e66));
-  main.position.set((v - 2) * 0.18 * s, mainH * 0.42, (v % 3 - 1) * 0.15 * s);
-  main.castShadow = true;
-  mount.add(main);
-
-  const snowH = mainH * 0.38;
-  const snow = new THREE.Mesh(
-    new THREE.ConeGeometry(0.42 * s, snowH, 6),
-    mountainMat(0xf0f2f5)
-  );
-  snow.position.copy(main.position);
-  snow.position.y += mainH * 0.68;
-  mount.add(snow);
-
-  if (v % 2 === 0) {
-    const subH = 1.9 * s;
-    const sub = new THREE.Mesh(new THREE.ConeGeometry(0.5 * s, subH, 5), mountainMat(0x5a5a54));
-    sub.position.set(0.55 * s, subH * 0.38, -0.35 * s);
-    sub.castShadow = true;
-    mount.add(sub);
-    const subSnow = new THREE.Mesh(
-      new THREE.ConeGeometry(0.28 * s, subH * 0.32, 5),
-      mountainMat(0xeceef0)
-    );
-    subSnow.position.copy(sub.position);
-    subSnow.position.y += subH * 0.72;
-    mount.add(subSnow);
-  }
-
-  const rock = new THREE.Mesh(
-    new THREE.DodecahedronGeometry(0.35 * s, 0),
-    mountainMat(0x555550)
-  );
-  rock.scale.set(1.4, 0.7, 1.2);
-  rock.position.set(-0.4 * s, 0.25 * s, 0.3 * s);
-  rock.castShadow = true;
-  mount.add(rock);
-
-  return mount;
-}
-
-function addMountainMesh(group, x, z, scale, assetLoader, i, yaw = 0) {
-  const assetScale = scale * 1.35;
-
-  if (assetLoader?.cache.has(NATURE_ASSETS.mountains[0])) {
-    const mount = new THREE.Group();
-    const primary = assetLoader.createNature(NATURE_ASSETS.mountains[i % 3], assetScale);
-    if (primary) {
-      primary.rotation.y = yaw;
-      mount.add(primary);
-      if (i % 3 !== 1) {
-        const secondary = assetLoader.createNature(
-          NATURE_ASSETS.mountains[(i + 1) % 3],
-          assetScale * (0.72 + (i % 4) * 0.08)
-        );
-        if (secondary) {
-          secondary.position.set(0.55 * scale, 0, -0.35 * scale);
-          secondary.rotation.y = yaw + 0.6;
-          mount.add(secondary);
-        }
-      }
-      mount.position.set(x, Y_GROUND, z);
-      group.add(mount);
-      return;
-    }
-  }
-
-  const procedural = createProceduralMountain(scale, i + x * 0.17 + z * 0.23);
-  procedural.rotation.y = yaw;
-  procedural.position.set(x, Y_GROUND, z);
-  group.add(procedural);
-}
-
-function createRockiesBorderMountains(scene, assetLoader) {
+function createWestBorderMountains(scene) {
   const group = new THREE.Group();
-  getRockiesBorderSamples(0.42).forEach((p, i) => {
-    const scale = 1.15 + (i % 4) * 0.28 + (p.along ?? 0) * 0.35;
-    const yaw = (i % 8) * 0.4;
-    addMountainMesh(group, p.x, p.z, scale, assetLoader, i, yaw);
+  const samples = getRockiesBorderSamples(0.95);
 
-    if (i % 2 === 0) {
-      addMountainMesh(group, p.x - 0.65, p.z + 0.5, scale * 0.82, assetLoader, i + 2, yaw + 0.5);
-    }
-    if (i % 3 === 0) {
-      addMountainMesh(group, p.x + 0.45, p.z - 0.55, scale * 0.7, assetLoader, i + 4, yaw - 0.3);
-    }
-    if (i % 5 === 0) {
-      addMountainMesh(group, p.x - 0.2, p.z - 0.75, scale * 1.15, assetLoader, i + 1, yaw + 1.1);
-    }
+  samples.forEach((p, i) => {
+    if (i % 2 !== 0) return;
+
+    const scale = 1.4 + (i % 4) * 0.3 + (p.along ?? 0) * 0.45;
+    const seed = i * 13.7 + p.x * 0.31 + p.z * 0.19;
+    const yaw = (seed % 1) * Math.PI * 2;
+    addMountainToScene(group, p.x, p.z, createSimpleMountain(scale, seed), yaw);
   });
+
   scene.add(group);
 }
 
-function createBcMountains(scene, assetLoader) {
+function createBcMountains(scene) {
   const group = new THREE.Group();
   let idx = 0;
-  for (let x = -MAP_HALF_X; x < MAP_HALF_X; x++) {
-    for (let z = -MAP_HALF_Z; z < MAP_HALF_Z; z++) {
+
+  for (let x = -MAP_HALF_X; x < MAP_HALF_X; x += 2) {
+    for (let z = -MAP_HALF_Z; z < MAP_HALF_Z; z += 2) {
       const cx = x + CELL / 2;
       const cz = z + CELL / 2;
       if (getRegionAt(cx, cz) !== 'bc') continue;
-      const hash = Math.sin(x * 73.2 + z * 19.5) * 43758.5453 % 1;
-      if (hash < 0.22) continue;
-      const scale = 0.95 + hash * 0.85;
-      const ox = (hash - 0.5) * 0.55;
-      const oz = (hash * 0.61 - 0.3) * 0.55;
-      addMountainMesh(group, cx + ox, cz + oz, scale, assetLoader, idx++, hash * Math.PI * 2);
-      if (hash > 0.55) {
-        addMountainMesh(group, cx + ox * 0.6 + 0.4, cz + oz * 0.5, scale * 0.75, assetLoader, idx++, hash * 3);
-      }
+
+      const hash = Math.abs(Math.sin(x * 73.2 + z * 19.5) * 43758.5453) % 1;
+      if (hash < 0.58) continue;
+
+      const scale = 1.15 + hash * 1.05;
+      const ox = (hash - 0.5) * 0.9;
+      const oz = (hash * 0.61 - 0.3) * 0.9;
+      const seed = idx * 9.13 + x * 0.17 + z * 0.23;
+      addMountainToScene(group, cx + ox, cz + oz, createSimpleMountain(scale, seed), hash * Math.PI * 2);
+      idx++;
     }
   }
+
   scene.add(group);
 }
 
@@ -376,8 +285,8 @@ function createRegionLabels(scene) {
 }
 
 function createAlbertaSky(scene) {
-  scene.background = new THREE.Color(0x6eb5e8);
-  scene.fog = new THREE.Fog(0x9ec8e8, 55, 130);
+  scene.background = new THREE.Color(0x7eb8e6);
+  scene.fog = new THREE.Fog(0xa8cce8, 60, 145);
 }
 
 export function setupLighting(scene) {

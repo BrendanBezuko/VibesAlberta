@@ -10,6 +10,7 @@ export const BUILDING_DEFS = {
     color: 0x003f87,
     accent: 0xf2cd00,
     maxLevel: 3,
+    baseHp: 480,
   },
   oil_rig: {
     id: 'oil_rig',
@@ -22,6 +23,7 @@ export const BUILDING_DEFS = {
     color: 0x2a2a2a,
     accent: 0xff6600,
     maxLevel: 3,
+    baseHp: 200,
   },
   wheat_farm: {
     id: 'wheat_farm',
@@ -34,6 +36,7 @@ export const BUILDING_DEFS = {
     color: 0xc4a035,
     accent: 0xf2cd00,
     maxLevel: 3,
+    baseHp: 180,
   },
   lumber_mill: {
     id: 'lumber_mill',
@@ -46,6 +49,7 @@ export const BUILDING_DEFS = {
     color: 0x5c3d2e,
     accent: 0x4a7c3f,
     maxLevel: 3,
+    baseHp: 200,
   },
   grain_silo: {
     id: 'grain_silo',
@@ -59,6 +63,7 @@ export const BUILDING_DEFS = {
     accent: 0xf2cd00,
     storageBonus: { wheat: 500 },
     maxLevel: 2,
+    baseHp: 140,
   },
   oil_depot: {
     id: 'oil_depot',
@@ -72,6 +77,7 @@ export const BUILDING_DEFS = {
     accent: 0xff6600,
     storageBonus: { oil: 800 },
     maxLevel: 2,
+    baseHp: 160,
   },
   rcmp_post: {
     id: 'rcmp_post',
@@ -85,11 +91,12 @@ export const BUILDING_DEFS = {
     accent: 0xf2cd00,
     autoTrains: 'mountie',
     maxLevel: 2,
+    baseHp: 240,
   },
   fence: {
     id: 'fence',
     name: 'Ranch Fence',
-    description: 'Blocks raider paths — they must break through. Press F to build, R to rotate. Rebuilds free after raids.',
+    description: 'Blocks raider paths — drag to draw a line, R to rotate, F to toggle build mode. Rebuilds free after raids.',
     size: 1,
     rotatable: true,
     barrier: true,
@@ -115,6 +122,7 @@ export const BUILDING_DEFS = {
     upkeep: { oil: 2.5 },
     defenseOilCost: 6,
     maxLevel: 3,
+    baseHp: 150,
   },
   air_wing: {
     id: 'air_wing',
@@ -128,6 +136,7 @@ export const BUILDING_DEFS = {
     accent: 0xcc0000,
     trains: 'fighter',
     maxLevel: 2,
+    baseHp: 220,
   },
 };
 
@@ -183,10 +192,19 @@ export function getEffectiveUpkeep(building) {
   return upkeep;
 }
 
-export function getBarrierHp(building) {
+export function getBuildingHp(building) {
   const def = BUILDING_DEFS[building.type];
-  if (!def.barrier) return 0;
-  return (def.barrierHp ?? 50) * (building.level ?? 1);
+  if (!def) return 0;
+  const level = building.level ?? 1;
+  if (def.barrier) {
+    return (def.barrierHp ?? 50) * level;
+  }
+  const base = def.baseHp ?? 150;
+  return Math.floor(base * (1 + (level - 1) * 0.4));
+}
+
+export function getBarrierHp(building) {
+  return getBuildingHp(building);
 }
 
 export class ResourceManager {
@@ -233,6 +251,15 @@ export class ResourceManager {
   addCapacity(bonuses) {
     for (const [key, amount] of Object.entries(bonuses)) {
       this.capacity[key] = (this.capacity[key] ?? 2000) + amount;
+    }
+    this.notify();
+  }
+
+  removeCapacity(bonuses) {
+    for (const [key, amount] of Object.entries(bonuses)) {
+      const next = Math.max(500, (this.capacity[key] ?? 2000) - amount);
+      this.capacity[key] = next;
+      this.resources[key] = Math.min(next, this.resources[key] ?? 0);
     }
     this.notify();
   }

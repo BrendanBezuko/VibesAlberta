@@ -14,6 +14,7 @@ export class UIManager {
     this.rm = resourceManager;
     this.game = game;
     this.selectedBuilding = null;
+    this._toastSide = 'left';
     this.els = {
       oil: document.getElementById('res-oil'),
       wheat: document.getElementById('res-wheat'),
@@ -23,6 +24,9 @@ export class UIManager {
       infoTitle: document.getElementById('info-title'),
       infoDesc: document.getElementById('info-desc'),
       infoLevel: document.getElementById('info-level'),
+      infoHealth: document.getElementById('info-health'),
+      infoHealthText: document.getElementById('info-health-text'),
+      infoHealthFill: document.getElementById('info-health-fill'),
       infoActions: document.getElementById('info-action-buttons'),
       infoClose: document.getElementById('info-close'),
       cancelBuild: document.getElementById('cancel-build'),
@@ -30,11 +34,19 @@ export class UIManager {
       raidBar: document.getElementById('raid-bar-fill'),
       raidText: document.getElementById('raid-timer-text'),
       waveNum: document.getElementById('wave-num'),
-      toastContainer: document.getElementById('toast-container'),
+      toastLeft: document.getElementById('toast-container-left'),
+      toastRight: document.getElementById('toast-container-right'),
       oilCap: document.getElementById('cap-oil'),
       wheatCap: document.getElementById('cap-wheat'),
       lumberCap: document.getElementById('cap-lumber'),
+      gameOver: document.getElementById('game-over'),
+      gameOverWave: document.getElementById('game-over-wave'),
+      gameOverRestart: document.getElementById('game-over-restart'),
     };
+
+    this.els.gameOverRestart?.addEventListener('click', () => {
+      window.location.reload();
+    });
 
     this.rm.onChange((resources, capacity, hqLevel) => {
       this.els.oil.textContent = Math.floor(resources.oil);
@@ -45,7 +57,7 @@ export class UIManager {
       if (this.els.wheatCap) this.els.wheatCap.style.width = `${(resources.wheat / capacity.wheat) * 100}%`;
       if (this.els.lumberCap) this.els.lumberCap.style.width = `${(resources.lumber / capacity.lumber) * 100}%`;
       this.updateBuildButtons();
-      if (this.selectedBuilding) this.renderActions(this.selectedBuilding);
+      if (this.selectedBuilding) this.updateActionButtons(this.selectedBuilding);
     });
 
     document.querySelectorAll('.build-btn[data-building]').forEach((btn) => {
@@ -98,7 +110,7 @@ export class UIManager {
       if (type === 'fence') {
         btn.title = raidBlocked
           ? 'Ranch Fence — unavailable during raids (rebuilds after)'
-          : 'Ranch Fence — F hotkey, R to rotate (no building during raids)';
+          : 'Ranch Fence — drag to draw, F hotkey, R to rotate';
       }
     });
   }
@@ -129,9 +141,6 @@ export class UIManager {
       const bonus = Object.entries(def.storageBonus).map(([k, v]) => `+${v} ${k}`).join(', ');
       desc += ` Capacity: ${bonus}.`;
     }
-    if (building.hp != null) {
-      desc += ` Durability: ${Math.ceil(building.hp)}/${building.maxHp}.`;
-    }
     if (def.autoTrains && TROOP_DEFS[def.autoTrains]) {
       const troop = TROOP_DEFS[def.autoTrains];
       const interval = getAutoTrainInterval(troop, level);
@@ -149,6 +158,7 @@ export class UIManager {
     }
 
     this.els.infoDesc.textContent = desc;
+    this.updateInfoHealth(building);
     this.els.infoPanel.classList.remove('hidden');
     this.renderActions(building);
   }
@@ -174,7 +184,14 @@ export class UIManager {
       btn.disabled = !canUpgrade;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.game.upgradeBuilding(this.selectedBuilding);
+        const ok = this.game.upgradeBuilding(building);
+        if (!ok) {
+          if (!cost || !this.rm.canAfford(cost ?? {})) {
+            this.showToast(`Need ${formatCost(cost ?? {})} to upgrade`, 'warn');
+          } else {
+            this.showToast('Cannot upgrade this building', 'warn');
+          }
+        }
       });
       container.appendChild(btn);
     }
@@ -211,12 +228,38 @@ export class UIManager {
     }
   }
 
+  updateActionButtons(building) {
+    const container = this.els.infoActions;
+    if (!container || !building) return;
+
+    const def = BUILDING_DEFS[building.type];
+    if (!def) return;
+
+    const level = building.level ?? 1;
+    const maxLevel = def.maxLevel ?? 3;
+
+    const upgradeBtn = container.querySelector('.upgrade-btn');
+    if (upgradeBtn && level < maxLevel) {
+      const cost = building.type === 'hq' ? HQ_UPGRADE_COSTS[level + 1] : getUpgradeCost(building);
+      upgradeBtn.disabled = !cost || !this.rm.canAfford(cost);
+    }
+
+    const trainBtn = container.querySelector('.train-btn');
+    if (trainBtn && def.trains && TROOP_DEFS[def.trains]) {
+      const troop = TROOP_DEFS[def.trains];
+      const queueFull = (this.game.combat?.getTrainingFor(building).length ?? 0) >= 2;
+      trainBtn.disabled = !this.rm.canAfford(troop.cost) || queueFull;
+    }
+  }
+
   refreshBuildingInfo(building) {
     if (!building || this.els.infoPanel.classList.contains('hidden')) return;
     if (this.selectedBuilding?.id !== building.id) return;
 
     const def = BUILDING_DEFS[building.type];
     if (!def) return;
+
+    const level = building.level ?? 1;
 
     let desc = def.description;
     const rate = getEffectiveRate(building);
@@ -234,12 +277,8 @@ export class UIManager {
       const bonus = Object.entries(def.storageBonus).map(([k, v]) => `+${v} ${k}`).join(', ');
       desc += ` Capacity: ${bonus}.`;
     }
-    if (building.hp != null) {
-      desc += ` Durability: ${Math.ceil(building.hp)}/${building.maxHp}.`;
-    }
     if (def.autoTrains && TROOP_DEFS[def.autoTrains]) {
       const troop = TROOP_DEFS[def.autoTrains];
-      const level = building.level ?? 1;
       const interval = getAutoTrainInterval(troop, level);
       const left = Math.max(0, interval - (building._autoTrainTimer ?? 0));
       desc += ` Auto-deploys ${troop.name} every ${interval.toFixed(1)}s (${formatCost(troop.cost)}).`;
@@ -253,7 +292,32 @@ export class UIManager {
       desc += ` Training: ${queue.map((t) => `${t.def.name} ${Math.ceil(t.timeLeft)}s`).join(', ')}.`;
     }
     this.els.infoDesc.textContent = desc;
+    this.updateInfoHealth(building);
     this.renderActions(building);
+  }
+
+  updateInfoHealth(building) {
+    if (!this.els.infoHealth) return;
+
+    if (building.hp == null || building.maxHp == null) {
+      this.els.infoHealth.classList.add('hidden');
+      return;
+    }
+
+    this.els.infoHealth.classList.remove('hidden');
+    const hp = Math.ceil(building.hp);
+    const maxHp = building.maxHp;
+    const pct = Math.max(0, Math.min(100, (building.hp / maxHp) * 100));
+
+    if (this.els.infoHealthText) {
+      this.els.infoHealthText.textContent = `${hp}/${maxHp}`;
+    }
+    if (this.els.infoHealthFill) {
+      this.els.infoHealthFill.style.width = `${pct}%`;
+      this.els.infoHealthFill.classList.remove('mid', 'low');
+      if (pct <= 25) this.els.infoHealthFill.classList.add('low');
+      else if (pct <= 50) this.els.infoHealthFill.classList.add('mid');
+    }
   }
 
   hideInfoPanel() {
@@ -276,11 +340,22 @@ export class UIManager {
     if (this.els.waveNum) this.els.waveNum.textContent = this.game.combat.wave;
   }
 
+  showGameOver(wave = 0) {
+    if (this.els.gameOverWave) {
+      this.els.gameOverWave.textContent = wave > 0 ? `You survived ${wave} wave${wave === 1 ? '' : 's'}.` : '';
+    }
+    this.els.gameOver?.classList.remove('hidden');
+  }
+
   showToast(message, type = 'info') {
+    const side = this._toastSide;
+    this._toastSide = side === 'left' ? 'right' : 'left';
+    const container = side === 'left' ? this.els.toastLeft : this.els.toastRight;
+
     const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
+    toast.className = `toast toast-${type} toast-${side}`;
     toast.textContent = message;
-    this.els.toastContainer.appendChild(toast);
+    container.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add('show'));
     setTimeout(() => {
       toast.classList.remove('show');

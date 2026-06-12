@@ -23,6 +23,8 @@ export class IsometricCamera {
 
     this.isDragging = false;
     this.lastMouse = { x: 0, y: 0 };
+    /** Return true to block left-click pan (e.g. fence drag placement). */
+    this.shouldBlockPan = null;
     this.bindEvents();
   }
 
@@ -79,6 +81,7 @@ export class IsometricCamera {
 
   bindEvents() {
     this.canvas.addEventListener('mousedown', (e) => {
+      if (e.button === 0 && this.shouldBlockPan?.(e)) return;
       if (e.button === 0 || e.button === 1) {
         this.isDragging = true;
         this.lastMouse = { x: e.clientX, y: e.clientY };
@@ -87,6 +90,10 @@ export class IsometricCamera {
 
     window.addEventListener('mousemove', (e) => {
       if (!this.isDragging) return;
+      if (e.buttons === 1 && this.shouldBlockPan?.(e)) {
+        this.isDragging = false;
+        return;
+      }
       const dx = e.clientX - this.lastMouse.x;
       const dy = e.clientY - this.lastMouse.y;
       this.pan(dx, dy);

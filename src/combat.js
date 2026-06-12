@@ -24,6 +24,7 @@ import {
 import { isInAlberta } from './combatRules.js';
 import { TROOP_DEFS, getAutoTrainInterval, MAX_MOUNTIES_PER_POST } from './troops.js';
 import { BUILDING_DEFS, formatCost } from './resources.js';
+import { updateBuildingHpBar } from './buildingHealth.js';
 import {
   initFighterState,
   flyToward,
@@ -44,7 +45,7 @@ export const ENEMY_DEFS = {
     range: 1.0,
     steal: 40,
     attackRate: 1.2,
-    waveHpBonus: 3,
+    waveHpBonus: 5,
     spawn: getSaskatchewanSpawn,
     create: createRaider,
     hpBarScale: 1,
@@ -57,7 +58,7 @@ export const ENEMY_DEFS = {
     range: 1.3,
     steal: 70,
     attackRate: 1.6,
-    waveHpBonus: 8,
+    waveHpBonus: 12,
     spawn: getNWTSpawn,
     create: createPolarBear,
     hpBarScale: 1.25,
@@ -70,7 +71,7 @@ export const ENEMY_DEFS = {
     range: 0.85,
     steal: 12,
     attackRate: 0.85,
-    waveHpBonus: 2,
+    waveHpBonus: 3,
     spawn: getBcSpawn,
     create: createBcRat,
     hpBarScale: 0.7,
@@ -83,7 +84,7 @@ export const ENEMY_DEFS = {
     range: 1.0,
     steal: 35,
     attackRate: 1.1,
-    waveHpBonus: 2,
+    waveHpBonus: 4,
     spawn: getMontanaSpawn,
     create: createBorderRunner,
     hpBarScale: 1,
@@ -91,6 +92,26 @@ export const ENEMY_DEFS = {
 };
 
 const WAVE_INTERVAL = 75;
+
+function getWaveScaling(wave) {
+  const w = Math.max(1, wave);
+  return {
+    enemyCount: Math.min(5 + w * 3 + Math.floor(w * w * 0.12), 45),
+    hpQuadratic: Math.floor(w * w * 0.2),
+    damageBonus: Math.floor(w * 1.5 + w * w * 0.07),
+    speedMult: 1 + Math.min(w * 0.03, 0.7),
+    attackRateMult: Math.max(0.42, 1 - w * 0.024),
+    stealMult: 1 + w * 0.07,
+    polarBearChance: Math.min(0.92, 0.1 + w * 0.06),
+    polarBearCount: 1 + Math.floor(w / 5),
+    bcRatChance: Math.min(0.9, 0.15 + w * 0.05),
+    bcRatCount: 1 + Math.floor(w / 3) + (w >= 10 ? 2 : w >= 6 ? 1 : 0),
+    runnerChance: Math.min(0.95, 0.22 + w * 0.05),
+    runnerCount: 1 + Math.floor(w / 4),
+    spawnDelayMult: Math.max(0.5, 1 - w * 0.014),
+    nextRaidInterval: Math.max(40, WAVE_INTERVAL - Math.floor(w * 2)),
+  };
+}
 
 export class CombatSystem {
   constructor(scene, game) {
@@ -101,6 +122,7 @@ export class CombatSystem {
     this.raiders = [];
     this.wave = 0;
     this.waveTimer = WAVE_INTERVAL;
+    this.waveInterval = WAVE_INTERVAL;
     this.raidActive = false;
     this.training = [];
     this.projectiles = [];
@@ -120,15 +142,17 @@ export class CombatSystem {
   }
 
   refreshCombatCaches() {
-    if (this._cachesStale || !this._producerTargets) {
-      this._producerTargets = [];
+    if (this._cachesStale || !this._nonHqTargets) {
+      this._nonHqTargets = [];
+      this._hqTarget = null;
       this._buildingPosById = new Map();
       for (const b of this.game.buildings) {
         const pos = this.buildingWorldPos(b);
         this._buildingPosById.set(b.id, pos);
-        const d = BUILDING_DEFS[b.type];
-        if (d?.produces || b.type === 'hq') {
-          this._producerTargets.push({ building: b, pos });
+        if (b.type === 'hq') {
+          this._hqTarget = { building: b, pos };
+        } else {
+          this._nonHqTargets.push({ building: b, pos });
         }
       }
       this._cachesStale = false;
@@ -136,7 +160,7 @@ export class CombatSystem {
 
     this._raiderTargetBuilding = new Map();
     for (const r of this.raiders) {
-      this._raiderTargetBuilding.set(r.id, this.findTargetBuildingFromProducers(r));
+      this._raiderTargetBuilding.set(r.id, this.findRaiderBuildingTarget(r));
     }
 
     this._engageableRaiders = [];
@@ -149,18 +173,19 @@ export class CombatSystem {
       : [];
   }
 
-  findTargetBuildingFromProducers(raider) {
+  findRaiderBuildingTarget(raider) {
     const pos = raider.mesh.position;
     let nearest = null;
     let minDist = Infinity;
-    for (const { building, pos: bpos } of this._producerTargets) {
+    for (const { building, pos: bpos } of this._nonHqTargets ?? []) {
       const d = pos.distanceTo(bpos);
       if (d < minDist) {
         minDist = d;
         nearest = building;
       }
     }
-    return nearest ?? this.hq;
+    if (nearest) return nearest;
+    return this._hqTarget?.building ?? this.hq ?? null;
   }
 
   isRaiderEngageable(raider) {
@@ -204,6 +229,7 @@ export class CombatSystem {
   }
 
   update(dt) {
+    if (this.game.gameOver) return;
     this.refreshCombatCaches();
     this.updateTraining(dt);
     this.updateAutoTraining(dt);
@@ -219,15 +245,16 @@ export class CombatSystem {
   }
 
   updateWaveTimer(dt) {
-    if (this.raidActive) return;
+    if (this.raidActive || this.game.gameOver) return;
     this.waveTimer -= dt;
-    this.game.ui.setRaidTimer(this.waveTimer, WAVE_INTERVAL);
+    this.game.ui.setRaidTimer(this.waveTimer, this.waveInterval);
     if (this.waveTimer <= 0) {
       this.startRaid();
     }
   }
 
   triggerRaidNow() {
+    if (this.game.gameOver) return false;
     if (this.raidActive) {
       this.game.ui.showToast('Already under attack!', 'warn');
       return false;
@@ -239,14 +266,17 @@ export class CombatSystem {
   startRaid(early = false) {
     this.wave++;
     this.raidActive = true;
-    this.waveTimer = WAVE_INTERVAL;
+    const scaling = getWaveScaling(this.wave);
+    this.waveTimer = scaling.nextRaidInterval;
+    this.waveInterval = scaling.nextRaidInterval;
 
     if (this.game.placement?.type === 'fence') {
       this.game.cancelPlacement();
       this.game.ui.onPlacementEnd();
     }
     this.game.ui.updateBuildButtons();
-    const count = Math.min(4 + this.wave * 2, 22);
+    const count = scaling.enemyCount;
+    const spawnGap = Math.floor(400 * scaling.spawnDelayMult);
 
     if (early) {
       this.game.ui.showToast(`⚔️ Early raid! Wave ${this.wave} incoming!`, 'raid');
@@ -257,37 +287,35 @@ export class CombatSystem {
     let delay = 0;
     for (let i = 0; i < count; i++) {
       setTimeout(() => this.spawnEnemy('raider'), delay);
-      delay += 400;
+      delay += spawnGap;
     }
 
-    if (Math.random() < 0.38) {
-      setTimeout(() => {
-        this.spawnEnemy('polar_bear');
-        this.game.ui.showToast('🐻‍❄️ Polar bear coming down from the NWT!', 'warn');
-      }, 1500 + Math.random() * 2000);
-    }
-
-    if (Math.random() < 0.42) {
-      const rats = 1 + Math.floor(Math.random() * 2);
-      for (let i = 0; i < rats; i++) {
+    if (Math.random() < scaling.polarBearChance) {
+      for (let i = 0; i < scaling.polarBearCount; i++) {
         setTimeout(() => {
-          this.spawnEnemy('bc_rat');
-          if (i === 0) this.game.ui.showToast('🐀 Giant rats sneaking in from BC!', 'warn');
-        }, 800 + i * 600 + Math.random() * 1200);
+          this.spawnEnemy('polar_bear');
+          if (i === 0) this.game.ui.showToast('🐻‍❄️ Polar bear coming down from the NWT!', 'warn');
+        }, 1500 + i * 900 + Math.random() * 2000);
       }
     }
 
-    const runners = Math.random() < 0.55 ? 1 + Math.floor(Math.random() * 3) : 0;
+    if (Math.random() < scaling.bcRatChance) {
+      for (let i = 0; i < scaling.bcRatCount; i++) {
+        setTimeout(() => {
+          this.spawnEnemy('bc_rat');
+          if (i === 0) this.game.ui.showToast('🐀 Giant rats sneaking in from BC!', 'warn');
+        }, 800 + i * 500 + Math.random() * 1200);
+      }
+    }
+
+    const runners = Math.random() < scaling.runnerChance
+      ? scaling.runnerCount + Math.floor(Math.random() * Math.min(3, 1 + Math.floor(this.wave / 8)))
+      : 0;
     for (let i = 0; i < runners; i++) {
       setTimeout(() => {
         this.spawnEnemy('border_runner');
         if (i === 0) this.game.ui.showToast('🏃 Smugglers crossing up from the States!', 'warn');
-      }, 1200 + i * 500 + Math.random() * 1500);
-    }
-
-    const reinforcements = Math.min(2, 1 + Math.floor(this.wave / 3));
-    for (let i = 0; i < reinforcements; i++) {
-      setTimeout(() => this.spawnMountieReinforcement(), 600 + i * 700);
+      }, 1200 + i * 450 + Math.random() * 1500);
     }
   }
 
@@ -300,8 +328,9 @@ export class CombatSystem {
     mesh.position.set(pos.x, 0, pos.z);
     this.scene.add(mesh);
 
+    const scaling = getWaveScaling(this.wave);
     const waveBonus = (def.waveHpBonus ?? 0) * this.wave;
-    const hp = def.hp + waveBonus;
+    const hp = Math.floor(def.hp + waveBonus + scaling.hpQuadratic);
 
     const enemy = {
       id: Math.random(),
@@ -309,27 +338,15 @@ export class CombatSystem {
       type,
       hp,
       maxHp: hp,
-      damage: def.damage,
-      speed: def.speed,
+      damage: Math.floor(def.damage + scaling.damageBonus),
+      speed: def.speed * scaling.speedMult,
       range: def.range,
       attackCooldown: 0,
-      steal: def.steal,
-      attackRate: def.attackRate,
+      steal: Math.floor(def.steal * scaling.stealMult),
+      attackRate: (def.attackRate ?? 1.2) * scaling.attackRateMult,
     };
     this.raiders.push(enemy);
     this.addHpBar(mesh, enemy, def.hpBarScale ?? 1);
-  }
-
-  spawnMountieReinforcement() {
-    const pos = getSaskatchewanSpawn();
-    const mesh = createMountie();
-    mesh.position.set(pos.x, 0, pos.z);
-    this.scene.add(mesh);
-
-    const troop = this.makeTroop('mountie', mesh, { speed: TROOP_DEFS.mountie.speed + 1, reinforcement: true });
-    this.troops.push(troop);
-    this.addHpBar(mesh, troop);
-    this.game.ui.showToast('⭐ Mounties riding in from Saskatchewan!', 'info');
   }
 
   makeTroop(type, mesh, extras = {}) {
@@ -694,6 +711,8 @@ export class CombatSystem {
   }
 
   updateRaiders(dt) {
+    if (this.game.gameOver) return;
+
     for (let i = this.raiders.length - 1; i >= 0; i--) {
       const raider = this.raiders[i];
       if (raider.hp <= 0) {
@@ -701,7 +720,9 @@ export class CombatSystem {
         continue;
       }
 
-      const targetTroop = this.findNearest(raider.mesh.position, this._combatUnits);
+      const targetTroop = this._combatUnits.length
+        ? this.findNearest(raider.mesh.position, this._combatUnits)
+        : null;
       const targetBuilding = this._raiderTargetBuilding.get(raider.id) ?? this.findTargetBuilding(raider);
 
       if (targetTroop) {
@@ -824,15 +845,14 @@ export class CombatSystem {
         this.game.ui.showToast(`💀 ${enemyDef.name} stole ${stolen} ${def.produces}!`, 'warn');
       }
     }
-    this.bumpAnimation(raider.mesh);
-    building._hitFlash = 0.3;
+    this.damageBuilding(raider, building);
   }
 
   findTargetBuilding(raider) {
     if (this._raiderTargetBuilding?.has(raider.id)) {
       return this._raiderTargetBuilding.get(raider.id);
     }
-    return this.findTargetBuildingFromProducers(raider);
+    return this.findRaiderBuildingTarget(raider);
   }
 
   buildingWorldPos(building) {
@@ -877,18 +897,40 @@ export class CombatSystem {
     if (unit.flyHeight != null) meshPos.y = unit.flyHeight;
   }
 
-  damageBarrier(attacker, building) {
-    building.hp -= attacker.damage;
+  damageBuilding(attacker, building) {
+    const damage = attacker.damage ?? ENEMY_DEFS[attacker.type]?.damage ?? 10;
+    building.hp = Math.max(0, (building.hp ?? 0) - damage);
     building._hitFlash = 0.35;
     this.bumpAnimation(attacker.mesh);
+    updateBuildingHpBar(building, this.game.isoCam?.camera);
 
     if (building.hp <= 0) {
-      this.game.destroyBuilding(building);
-      const who = ENEMY_DEFS[attacker.type]?.name ?? 'Invaders';
-      this.game.ui.showToast(`🪵 ${who} broke through a ranch fence!`, 'warn');
+      this.destroyRaidTarget(attacker, building);
     } else if (this.game.selectedBuilding?.id === building.id) {
       this.game.ui.showBuildingInfo(building);
     }
+  }
+
+  destroyRaidTarget(attacker, building) {
+    if (building.type === 'hq') {
+      this.game.gameOver();
+      this.game.destroyBuilding(building);
+      return;
+    }
+
+    const who = ENEMY_DEFS[attacker.type]?.name ?? 'Invaders';
+    const def = BUILDING_DEFS[building.type];
+    const buildingType = building.type;
+    this.game.destroyBuilding(building);
+    if (buildingType === 'fence') {
+      this.game.ui.showToast(`🪵 ${who} broke through a ranch fence!`, 'warn');
+    } else {
+      this.game.ui.showToast(`💥 ${who} destroyed your ${def?.name ?? 'building'}!`, 'warn');
+    }
+  }
+
+  damageBarrier(attacker, building) {
+    this.damageBuilding(attacker, building);
   }
 
   faceTarget(mesh, target) {

@@ -202,7 +202,13 @@ export function getRockiesBorderSamples(step = 0.45) {
       const nx = b.x - a.x;
       const nz = b.y - a.y;
       const len2 = Math.sqrt(nx * nx + nz * nz) || 1;
-      pts.push({ x: x - (nx / len2) * 0.55, z: z - (nz / len2) * 0.55, along: t });
+      pts.push({
+        x: x - (nx / len2) * 0.55,
+        z: z - (nz / len2) * 0.55,
+        along: t,
+        nx,
+        nz,
+      });
     }
   }
   return pts;

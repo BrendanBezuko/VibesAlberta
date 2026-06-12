@@ -85,7 +85,7 @@
           <span class="build-name">RCMP Post</span>
           <span class="build-cost">250🛢️ 150🌲</span>
         </button>
-        <button class="build-btn" data-building="fence" title="Ranch Fence — F hotkey, R to rotate (no building during raids)">
+        <button class="build-btn" data-building="fence" title="Ranch Fence — drag to draw a line, F hotkey, R to rotate">
           <span class="build-icon">🪵</span>
           <span class="build-name">Ranch Fence</span>
           <span class="build-cost">50🌲</span>
@@ -111,16 +111,35 @@
           <h3 id="info-title">Building</h3>
           <span id="info-level" class="info-level">Level 1</span>
         </div>
+        <div id="info-health" class="info-health">
+          <div class="info-health-row">
+            <span class="info-health-label">Health</span>
+            <span id="info-health-text" class="info-health-text">—</span>
+          </div>
+          <div class="info-health-track">
+            <div id="info-health-fill" class="info-health-fill"></div>
+          </div>
+        </div>
         <p id="info-desc"></p>
         <div id="info-actions"><div id="info-action-buttons"></div></div>
         <button id="info-close">Close</button>
       </div>
 
-      <div id="toast-container"></div>
+      <div id="toast-container-left"></div>
+      <div id="toast-container-right"></div>
 
       <footer id="hud-bottom">
-        <p>Drag pan · Scroll zoom · F fence · T train · R rotate · Select Air Wing then train CF-18s</p>
+        <p>Drag pan (middle mouse while fencing) · Scroll zoom · F fence · drag to draw fence · T train · R rotate</p>
       </footer>
+
+      <div id="game-over" class="hidden">
+        <div class="game-over-panel">
+          <h2>Game Over</h2>
+          <p id="game-over-text">The Alberta Legislature has fallen.</p>
+          <p id="game-over-wave" class="game-over-wave"></p>
+          <button id="game-over-restart" type="button">Try Again</button>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.js"></script>
   </body>
